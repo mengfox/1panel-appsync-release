@@ -29,6 +29,10 @@ REGION_MODE="${REGION_MODE:-auto}"
 FORCE_CN="${FORCE_CN:-false}"
 FORCE_GLOBAL="${FORCE_GLOBAL:-false}"
 
+# 指定版本时，CNB Raw 只能代表 main 最新文件，默认不作为指定版本兜底，避免装错版本。
+# 如确实需要允许 CNB Raw 兜底，可设置：ALLOW_CNB_RAW_FALLBACK_FOR_VERSION=true
+ALLOW_CNB_RAW_FALLBACK_FOR_VERSION="${ALLOW_CNB_RAW_FALLBACK_FOR_VERSION:-false}"
+
 # 探测参数
 PROBE_CONNECT_TIMEOUT="${PROBE_CONNECT_TIMEOUT:-5}"
 PROBE_MAX_TIME="${PROBE_MAX_TIME:-10}"
@@ -37,7 +41,9 @@ PROBE_MAX_TIME="${PROBE_MAX_TIME:-10}"
 DOWNLOAD_URL="${DOWNLOAD_URL:-}"
 
 log() {
-  echo "[$(date '+%F %T')] $*"
+  # 注意：日志必须输出到 stderr。
+  # download_binary 会通过命令替换返回二进制路径，如果日志输出到 stdout，会污染返回值。
+  echo "[$(date '+%F %T')] $*" >&2
 }
 
 warn() {
@@ -77,7 +83,7 @@ usage() {
   FORCE_CN=true                 兼容旧参数，等价 REGION_MODE=cn
   FORCE_GLOBAL=true             等价 REGION_MODE=global
   CHANNEL=latest                安装最新版
-  CHANNEL=v0.3.9                安装指定版本
+  CHANNEL=v0.4.3                安装指定版本
   DOWNLOAD_URL=https://...      手动指定二进制下载地址
 
 示例：
@@ -87,7 +93,7 @@ usage() {
 
   curl -fsSL https://raw.githubusercontent.com/mengfox/1panel-appsync-release/main/install-update.sh | sudo env REGION_MODE=cn bash
 
-  curl -fsSL https://raw.githubusercontent.com/mengfox/1panel-appsync-release/main/install-update.sh | sudo env CHANNEL=v0.3.9 bash
+  curl -fsSL https://raw.githubusercontent.com/mengfox/1panel-appsync-release/main/install-update.sh | sudo env CHANNEL=v0.4.3 bash
 EOF
 }
 
@@ -186,12 +192,12 @@ download_file() {
 
 probe_url() {
   local url="$1"
+  local cost=""
 
   if ! has_cmd curl; then
     return 1
   fi
 
-  local cost
   cost="$(
     curl -fsIL \
       --connect-timeout "$PROBE_CONNECT_TIMEOUT" \
@@ -254,8 +260,8 @@ build_candidate_urls() {
   local asset="$1"
   local mode="$2"
 
-  local github_url
-  local cnb_url
+  local github_url=""
+  local cnb_url=""
 
   if [ "$CHANNEL" = "latest" ]; then
     github_url="https://github.com/${GITHUB_REPO}/releases/latest/download/${asset}"
@@ -263,6 +269,12 @@ build_candidate_urls() {
   else
     github_url="https://github.com/${GITHUB_REPO}/releases/download/${CHANNEL}/${asset}"
     cnb_url="${CNB_REPO}/-/git/raw/main/dist/${asset}"
+
+    # 指定版本时优先保证版本准确。CNB Raw 不是版本化地址，默认只返回 GitHub Release URL。
+    if [ "$ALLOW_CNB_RAW_FALLBACK_FOR_VERSION" != "true" ]; then
+      printf "%s\n" "$github_url"
+      return 0
+    fi
   fi
 
   case "$mode" in
@@ -343,6 +355,7 @@ download_binary() {
 
       if "$out" version >/dev/null 2>&1; then
         log "下载成功：$url"
+        # 只有这里输出到 stdout，供 new_bin="$(download_binary)" 接收。
         echo "$out"
         return 0
       fi
