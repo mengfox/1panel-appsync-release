@@ -1,0 +1,47 @@
+name: Sync Release Repo to CNB
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync-cnb:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check CNB token
+        env:
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+        run: |
+          if [ -z "$CNB_TOKEN" ]; then
+            echo "缺少 CNB_TOKEN"
+            exit 1
+          fi
+
+      - name: Sync to CNB
+        env:
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git remote remove cnb 2>/dev/null || true
+          git remote add cnb "https://cnb:${CNB_TOKEN}@cnb.cool/mengfox/1panel-appsync-release"
+
+          git push cnb HEAD:main --force
+
+          if git describe --tags --exact-match >/dev/null 2>&1; then
+            git push cnb --tags --force
+          fi

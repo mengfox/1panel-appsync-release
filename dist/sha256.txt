@@ -1,0 +1,2 @@
+8f4771089b506f425423c52f34053093e77ed0bebb4a13260c674af4a1de42e1  out/dist/1panel-appsync-linux-amd64
+bc33cd907c7eb4216c7215cacbee85f3e585f9537ad6e70ac24d1bfc6326eb5b  out/dist/1panel-appsync-linux-arm64
