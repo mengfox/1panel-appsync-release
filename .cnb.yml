@@ -1,0 +1,17 @@
+$:
+  tag_push:
+    - stages:
+        - name: create cnb release
+          type: git:release
+          options:
+            title: 1Panel AppSync
+            description: 1Panel AppSync binary release
+            latest: true
+
+        - name: upload release assets
+          image: cnbcool/attachments:latest
+          settings:
+            attachments:
+              - "./dist/1panel-appsync-linux-amd64"
+              - "./dist/1panel-appsync-linux-arm64"
+              - "./dist/sha256.txt"

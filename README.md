@@ -20,15 +20,6 @@ curl -fsSL https://cnb.cool/mengfox/1panel-appsync-release/-/raw/main/install-up
 curl -fsSL https://raw.githubusercontent.com/mengfox/1panel-appsync-release/main/install-update.sh | sudo CHANNEL=v0.3.9 bash
 ```
 
-## 手动安装
-
-```bash
-curl -fL -o 1panel-appsync https://github.com/mengfox/1panel-appsync-release/releases/latest/download/1panel-appsync-linux-amd64
-chmod +x 1panel-appsync
-sudo install -m 0755 1panel-appsync /usr/local/bin/1panel-appsync
-1panel-appsync version
-```
-
 ## 常用命令
 
 ```bash
