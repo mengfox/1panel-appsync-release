@@ -1,2 +1,2 @@
-3c128a283397e6d966da6f7400f8c3d579a5ad6c35facf787363849f242f66d3  out/dist/1panel-appsync-linux-amd64
-40d2d3bdb7020721aaa0848b8aef9acca01aaa18baa0dddf7521571bca1fd99e  out/dist/1panel-appsync-linux-arm64
+daa1006f1857683a15e32370453e414a87b1cbe66b589d2e59e7a08443468523  out/dist/1panel-appsync-linux-amd64
+261ca741e0703602fe0f3c8a30c56773f41de31fbb9082f3708d6bdadf00d5a0  out/dist/1panel-appsync-linux-arm64

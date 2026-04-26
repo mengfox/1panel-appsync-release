@@ -2,9 +2,12 @@
 set -euo pipefail
 
 APP_NAME="1panel-appsync"
+
+# 发布仓库
 GITHUB_REPO="${GITHUB_REPO:-mengfox/1panel-appsync-release}"
 CNB_REPO="${CNB_REPO:-https://cnb.cool/mengfox/1panel-appsync-release}"
 
+# 安装路径
 BIN_DIR="${BIN_DIR:-/usr/local/bin}"
 BIN_PATH="${BIN_DIR}/${APP_NAME}"
 CONFIG_DIR="${CONFIG_DIR:-/etc/${APP_NAME}}"
@@ -12,12 +15,33 @@ DATA_DIR="${DATA_DIR:-/var/lib/${APP_NAME}}"
 LOG_DIR="${LOG_DIR:-/var/log/${APP_NAME}}"
 SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
 
+# 临时目录与版本
 TMP_DIR="${TMP_DIR:-/tmp/${APP_NAME}-install}"
 CHANNEL="${CHANNEL:-latest}"
+
+# 节点选择：
+# REGION_MODE=auto   自动测速选择 GitHub/CNB
+# REGION_MODE=cn     强制优先 CNB
+# REGION_MODE=global 强制优先 GitHub
+REGION_MODE="${REGION_MODE:-auto}"
+
+# 兼容旧变量
 FORCE_CN="${FORCE_CN:-false}"
+FORCE_GLOBAL="${FORCE_GLOBAL:-false}"
+
+# 探测参数
+PROBE_CONNECT_TIMEOUT="${PROBE_CONNECT_TIMEOUT:-5}"
+PROBE_MAX_TIME="${PROBE_MAX_TIME:-10}"
+
+# 手动指定下载地址，优先级最高
+DOWNLOAD_URL="${DOWNLOAD_URL:-}"
 
 log() {
   echo "[$(date '+%F %T')] $*"
+}
+
+warn() {
+  echo "警告：$*" >&2
 }
 
 die() {
@@ -46,11 +70,24 @@ usage() {
   bash install-update.sh uninstall
   bash install-update.sh status
 
-环境变量：
+常用环境变量：
+  REGION_MODE=auto              自动判断国内/海外节点，默认
+  REGION_MODE=cn                强制优先 CNB
+  REGION_MODE=global            强制优先 GitHub
+  FORCE_CN=true                 兼容旧参数，等价 REGION_MODE=cn
+  FORCE_GLOBAL=true             等价 REGION_MODE=global
   CHANNEL=latest                安装最新版
   CHANNEL=v0.3.9                安装指定版本
-  FORCE_CN=true                 优先使用 CNB
   DOWNLOAD_URL=https://...      手动指定二进制下载地址
+
+示例：
+  curl -fsSL https://raw.githubusercontent.com/mengfox/1panel-appsync-release/main/install-update.sh | sudo bash
+
+  curl -fsSL https://cnb.cool/mengfox/1panel-appsync-release/-/git/raw/main/install-update.sh | sudo bash
+
+  curl -fsSL https://raw.githubusercontent.com/mengfox/1panel-appsync-release/main/install-update.sh | sudo env REGION_MODE=cn bash
+
+  curl -fsSL https://raw.githubusercontent.com/mengfox/1panel-appsync-release/main/install-update.sh | sudo env CHANNEL=v0.3.9 bash
 EOF
 }
 
@@ -70,7 +107,7 @@ install_packages() {
   pm="$(detect_pm || true)"
 
   if [ -z "$pm" ]; then
-    log "未识别包管理器，请手动安装：${packages[*]}"
+    warn "未识别包管理器，请手动安装：${packages[*]}"
     return 0
   fi
 
@@ -147,8 +184,138 @@ download_file() {
   fi
 }
 
+probe_url() {
+  local url="$1"
+
+  if ! has_cmd curl; then
+    return 1
+  fi
+
+  local cost
+  cost="$(
+    curl -fsIL \
+      --connect-timeout "$PROBE_CONNECT_TIMEOUT" \
+      --max-time "$PROBE_MAX_TIME" \
+      -o /dev/null \
+      -w "%{time_total}" \
+      "$url" 2>/dev/null || true
+  )"
+
+  if [ -n "$cost" ]; then
+    echo "$cost"
+    return 0
+  fi
+
+  cost="$(
+    curl -fsL \
+      -r 0-0 \
+      --connect-timeout "$PROBE_CONNECT_TIMEOUT" \
+      --max-time "$PROBE_MAX_TIME" \
+      -o /dev/null \
+      -w "%{time_total}" \
+      "$url" 2>/dev/null || true
+  )"
+
+  if [ -n "$cost" ]; then
+    echo "$cost"
+    return 0
+  fi
+
+  return 1
+}
+
+float_less_than() {
+  awk "BEGIN { exit !($1 < $2) }"
+}
+
+normalize_region_mode() {
+  if [ "$FORCE_CN" = "true" ]; then
+    echo "cn"
+    return 0
+  fi
+
+  if [ "$FORCE_GLOBAL" = "true" ]; then
+    echo "global"
+    return 0
+  fi
+
+  case "$REGION_MODE" in
+    auto|cn|global)
+      echo "$REGION_MODE"
+      ;;
+    *)
+      warn "REGION_MODE=$REGION_MODE 不支持，自动切换为 auto"
+      echo "auto"
+      ;;
+  esac
+}
+
+build_candidate_urls() {
+  local asset="$1"
+  local mode="$2"
+
+  local github_url
+  local cnb_url
+
+  if [ "$CHANNEL" = "latest" ]; then
+    github_url="https://github.com/${GITHUB_REPO}/releases/latest/download/${asset}"
+    cnb_url="${CNB_REPO}/-/git/raw/main/dist/${asset}"
+  else
+    github_url="https://github.com/${GITHUB_REPO}/releases/download/${CHANNEL}/${asset}"
+    cnb_url="${CNB_REPO}/-/git/raw/main/dist/${asset}"
+  fi
+
+  case "$mode" in
+    cn)
+      printf "%s\n%s\n" "$cnb_url" "$github_url"
+      ;;
+    global)
+      printf "%s\n%s\n" "$github_url" "$cnb_url"
+      ;;
+    auto)
+      local github_cost=""
+      local cnb_cost=""
+
+      log "正在自动判断下载节点..."
+      github_cost="$(probe_url "$github_url" || true)"
+      cnb_cost="$(probe_url "$cnb_url" || true)"
+
+      if [ -n "$github_cost" ]; then
+        log "GitHub 可用，耗时：${github_cost}s"
+      else
+        log "GitHub 探测失败"
+      fi
+
+      if [ -n "$cnb_cost" ]; then
+        log "CNB 可用，耗时：${cnb_cost}s"
+      else
+        log "CNB 探测失败"
+      fi
+
+      if [ -n "$github_cost" ] && [ -n "$cnb_cost" ]; then
+        if float_less_than "$cnb_cost" "$github_cost"; then
+          log "自动选择：CNB"
+          printf "%s\n%s\n" "$cnb_url" "$github_url"
+        else
+          log "自动选择：GitHub"
+          printf "%s\n%s\n" "$github_url" "$cnb_url"
+        fi
+      elif [ -n "$cnb_cost" ]; then
+        log "自动选择：CNB"
+        printf "%s\n%s\n" "$cnb_url" "$github_url"
+      elif [ -n "$github_cost" ]; then
+        log "自动选择：GitHub"
+        printf "%s\n%s\n" "$github_url" "$cnb_url"
+      else
+        warn "GitHub 和 CNB 探测均失败，按默认顺序尝试：GitHub -> CNB"
+        printf "%s\n%s\n" "$github_url" "$cnb_url"
+      fi
+      ;;
+  esac
+}
+
 download_binary() {
-  local platform asset out urls
+  local platform asset out mode urls url
 
   platform="$(detect_platform)"
   asset="${APP_NAME}-${platform}"
@@ -157,48 +324,38 @@ download_binary() {
   rm -rf "$TMP_DIR"
   mkdir -p "$TMP_DIR"
 
-  if [ -n "${DOWNLOAD_URL:-}" ]; then
-    urls=("$DOWNLOAD_URL")
-  elif [ "$CHANNEL" = "latest" ]; then
-    if [ "$FORCE_CN" = "true" ]; then
-      urls=(
-        "${CNB_REPO}/-/raw/main/dist/${asset}"
-        "https://github.com/${GITHUB_REPO}/releases/latest/download/${asset}"
-      )
-    else
-      urls=(
-        "https://github.com/${GITHUB_REPO}/releases/latest/download/${asset}"
-        "${CNB_REPO}/-/raw/main/dist/${asset}"
-      )
-    fi
+  if [ -n "$DOWNLOAD_URL" ]; then
+    urls="$DOWNLOAD_URL"
+    log "使用手动指定下载地址：$DOWNLOAD_URL"
   else
-    if [ "$FORCE_CN" = "true" ]; then
-      urls=(
-        "${CNB_REPO}/-/raw/main/dist/${asset}"
-        "https://github.com/${GITHUB_REPO}/releases/download/${CHANNEL}/${asset}"
-      )
-    else
-      urls=(
-        "https://github.com/${GITHUB_REPO}/releases/download/${CHANNEL}/${asset}"
-        "${CNB_REPO}/-/raw/main/dist/${asset}"
-      )
-    fi
+    mode="$(normalize_region_mode)"
+    log "下载节点模式：$mode"
+    urls="$(build_candidate_urls "$asset" "$mode")"
   fi
 
-  for url in "${urls[@]}"; do
+  while IFS= read -r url; do
+    [ -n "$url" ] || continue
+
     log "尝试下载：$url"
+
     if download_file "$url" "$out"; then
       chmod +x "$out"
+
       if "$out" version >/dev/null 2>&1; then
         log "下载成功：$url"
         echo "$out"
         return 0
       fi
-      log "下载文件不是有效二进制，跳过"
-    fi
-  done
 
-  die "下载失败。可通过 DOWNLOAD_URL 指定二进制地址。"
+      warn "下载文件不是有效二进制，跳过：$url"
+    else
+      warn "下载失败，尝试下一个源：$url"
+    fi
+  done <<EOF
+$urls
+EOF
+
+  die "下载失败。可设置 REGION_MODE=cn/global 或 DOWNLOAD_URL 手动指定二进制地址。"
 }
 
 write_systemd_service() {
