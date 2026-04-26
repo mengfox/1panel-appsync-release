@@ -14,6 +14,12 @@ curl -fsSL https://raw.githubusercontent.com/mengfox/1panel-appsync-release/main
 curl -fsSL https://cnb.cool/mengfox/1panel-appsync-release/-/raw/main/install-update.sh | sudo FORCE_CN=true bash
 ```
 
+## 安装指定版本
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mengfox/1panel-appsync-release/main/install-update.sh | sudo CHANNEL=v0.3.9 bash
+```
+
 ## 手动安装
 
 ```bash

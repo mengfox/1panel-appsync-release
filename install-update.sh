@@ -47,10 +47,10 @@ usage() {
   bash install-update.sh status
 
 环境变量：
-  GITHUB_REPO=mengfox/1panel-appsync-release
-  CNB_REPO=https://cnb.cool/mengfox/1panel-appsync-release
-  FORCE_CN=true
-  DOWNLOAD_URL=https://example.com/1panel-appsync-linux-amd64
+  CHANNEL=latest                安装最新版
+  CHANNEL=v0.3.9                安装指定版本
+  FORCE_CN=true                 优先使用 CNB
+  DOWNLOAD_URL=https://...      手动指定二进制下载地址
 EOF
 }
 
@@ -116,6 +116,7 @@ ensure_dependencies() {
 
 detect_platform() {
   local os arch
+
   os="$(uname -s | tr '[:upper:]' '[:lower:]')"
   arch="$(uname -m)"
 
@@ -147,7 +148,7 @@ download_file() {
 }
 
 download_binary() {
-  local platform asset out urls url
+  local platform asset out urls
 
   platform="$(detect_platform)"
   asset="${APP_NAME}-${platform}"
@@ -158,18 +159,30 @@ download_binary() {
 
   if [ -n "${DOWNLOAD_URL:-}" ]; then
     urls=("$DOWNLOAD_URL")
-  elif [ "$FORCE_CN" = "true" ]; then
-    urls=(
-      "${CNB_REPO}/-/releases/latest/download/${asset}"
-      "${CNB_REPO}/-/raw/main/dist/${asset}"
-      "https://github.com/${GITHUB_REPO}/releases/latest/download/${asset}"
-    )
+  elif [ "$CHANNEL" = "latest" ]; then
+    if [ "$FORCE_CN" = "true" ]; then
+      urls=(
+        "${CNB_REPO}/-/raw/main/dist/${asset}"
+        "https://github.com/${GITHUB_REPO}/releases/latest/download/${asset}"
+      )
+    else
+      urls=(
+        "https://github.com/${GITHUB_REPO}/releases/latest/download/${asset}"
+        "${CNB_REPO}/-/raw/main/dist/${asset}"
+      )
+    fi
   else
-    urls=(
-      "https://github.com/${GITHUB_REPO}/releases/latest/download/${asset}"
-      "${CNB_REPO}/-/releases/latest/download/${asset}"
-      "${CNB_REPO}/-/raw/main/dist/${asset}"
-    )
+    if [ "$FORCE_CN" = "true" ]; then
+      urls=(
+        "${CNB_REPO}/-/raw/main/dist/${asset}"
+        "https://github.com/${GITHUB_REPO}/releases/download/${CHANNEL}/${asset}"
+      )
+    else
+      urls=(
+        "https://github.com/${GITHUB_REPO}/releases/download/${CHANNEL}/${asset}"
+        "${CNB_REPO}/-/raw/main/dist/${asset}"
+      )
+    fi
   fi
 
   for url in "${urls[@]}"; do
@@ -269,11 +282,13 @@ install_or_update() {
 
 uninstall() {
   need_root
+
   if has_cmd systemctl; then
     systemctl disable --now "$APP_NAME.service" 2>/dev/null || true
     rm -f "$SERVICE_FILE"
     systemctl daemon-reload
   fi
+
   rm -f "$BIN_PATH"
   log "已卸载程序和 systemd service，配置与数据默认保留。"
 }
