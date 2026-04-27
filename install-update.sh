@@ -47,11 +47,17 @@ DOWNLOAD_URL="${DOWNLOAD_URL:-}"
 # START_SERVICE=false        写入 systemd 但不立即启动
 # INSTALL_DEPS=false         不自动安装依赖
 # RUN_DETECT=false           安装后不自动检测 1Panel 本地应用目录
+# SYNC_AFTER_INSTALL=false   安装完成后不执行首次同步，只启动 daemon 等下一轮
+# SYNC_TIMEOUT=600           首次同步最大等待秒数；0 表示不限制
+# APPSYNC_DAEMON_ARGS=""     daemon/sync 额外参数，例如 --local-dir
 INSTALL_SERVICE="${INSTALL_SERVICE:-true}"
 ENABLE_SERVICE="${ENABLE_SERVICE:-true}"
 START_SERVICE="${START_SERVICE:-true}"
 INSTALL_DEPS="${INSTALL_DEPS:-true}"
 RUN_DETECT="${RUN_DETECT:-true}"
+SYNC_AFTER_INSTALL="${SYNC_AFTER_INSTALL:-true}"
+SYNC_TIMEOUT="${SYNC_TIMEOUT:-600}"
+APPSYNC_DAEMON_ARGS="${APPSYNC_DAEMON_ARGS:-}"
 
 # 日志显示
 QUIET="${QUIET:-false}"
@@ -158,23 +164,26 @@ ${APP_TITLE} 安装 / 更新脚本
   - 安装二进制到：${BIN_PATH}
   - 写入环境文件：${CONFIG_DIR}/env
   - 写入 systemd：${SERVICE_FILE}
-  - 自动执行：systemctl enable --now ${APP_NAME}.service
+  - 安装后先执行一次：${APP_NAME} sync
+  - 然后执行：systemctl enable && systemctl restart ${APP_NAME}.service
   - 运行模式：${APP_NAME} daemon
-  - 定时策略：启动立即同步一次，之后按程序内置 scheduler 周期同步
+  - 定时策略：daemon 启动后立即检查，之后按程序内置 scheduler 周期同步
 
 常用环境变量：
   REGION_MODE=auto              自动判断下载节点，默认
   REGION_MODE=cn                强制优先 CNB
   REGION_MODE=global            强制优先 GitHub
   CHANNEL=latest                安装最新版
-  CHANNEL=v0.4.8                安装指定版本
+  CHANNEL=v0.5.0                安装指定版本
   DOWNLOAD_URL=https://...      手动指定二进制下载地址
   INSTALL_SERVICE=true          是否写入 systemd 服务
   ENABLE_SERVICE=true           是否设置开机自启动
   START_SERVICE=true            是否安装后立即启动
   INSTALL_DEPS=true             是否自动补齐 curl/git/ca-certificates
   RUN_DETECT=true               是否安装后自动检测 1Panel 本地应用目录
-  APPSYNC_DAEMON_ARGS=""        daemon 额外参数，例如 --local-dir
+  SYNC_AFTER_INSTALL=true       是否安装后立即执行一次同步
+  SYNC_TIMEOUT=600              首次同步最大等待秒数，0 表示不限制
+  APPSYNC_DAEMON_ARGS=""        daemon/sync 额外参数，例如 --local-dir
   NO_COLOR=true                 关闭彩色输出
   QUIET=true                    减少安装提示
 
@@ -182,7 +191,7 @@ ${APP_TITLE} 安装 / 更新脚本
   curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPO}/main/install-update.sh | sudo bash
   curl -fsSL ${CNB_REPO}/-/git/raw/main/install-update.sh | sudo bash
   curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPO}/main/install-update.sh | sudo env REGION_MODE=cn bash
-  curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPO}/main/install-update.sh | sudo env CHANNEL=v0.4.8 bash
+  curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPO}/main/install-update.sh | sudo env CHANNEL=v0.5.0 bash
   curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPO}/main/install-update.sh | sudo env START_SERVICE=false bash
 EOF_USAGE
 }
@@ -519,11 +528,19 @@ write_systemd_service() {
 # 示例：自定义 1Panel 本地应用路径
 # APPSYNC_DAEMON_ARGS="--local-dir /data/1panel/resource/apps/local"
 
-APPSYNC_DAEMON_ARGS=""
 EOF_ENV
+    printf 'APPSYNC_DAEMON_ARGS="%s"\n' "$APPSYNC_DAEMON_ARGS" >> "$CONFIG_DIR/env"
     ok "已创建环境文件：$CONFIG_DIR/env"
   else
     ok "环境文件已存在：$CONFIG_DIR/env"
+    if [ -n "$APPSYNC_DAEMON_ARGS" ]; then
+      if grep -q '^APPSYNC_DAEMON_ARGS=' "$CONFIG_DIR/env"; then
+        sed -i "s|^APPSYNC_DAEMON_ARGS=.*|APPSYNC_DAEMON_ARGS=\"${APPSYNC_DAEMON_ARGS}\"|" "$CONFIG_DIR/env"
+      else
+        printf '\nAPPSYNC_DAEMON_ARGS="%s"\n' "$APPSYNC_DAEMON_ARGS" >> "$CONFIG_DIR/env"
+      fi
+      ok "已更新环境参数：APPSYNC_DAEMON_ARGS=${APPSYNC_DAEMON_ARGS}"
+    fi
   fi
 
   cat > "$SERVICE_FILE" <<EOF_SERVICE
@@ -535,7 +552,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=-${CONFIG_DIR}/env
-ExecStart=/bin/sh -c '${BIN_PATH} daemon \${APPSYNC_DAEMON_ARGS:-}'
+ExecStart=${BIN_PATH} daemon \$APPSYNC_DAEMON_ARGS
 Restart=always
 RestartSec=10
 TimeoutStopSec=30
@@ -555,7 +572,7 @@ EOF_SERVICE
 }
 
 service_value() {
-  local action=""
+  local action="$1"
   local out=""
 
   if ! has_systemd; then
@@ -563,24 +580,89 @@ service_value() {
     return 0
   fi
 
-  case "" in
+  case "$action" in
     active)
-      if out="0 0systemctl is-active ".service" 2>/dev/null)"; then
-        echo ""
+      if out="$(systemctl is-active "$APP_NAME.service" 2>/dev/null)"; then
+        echo "$out"
       else
-        echo "inactive"
+        echo "${out:-inactive}"
       fi
       ;;
     enabled)
-      if out="0 0systemctl is-enabled ".service" 2>/dev/null)"; then
-        echo ""
+      if out="$(systemctl is-enabled "$APP_NAME.service" 2>/dev/null)"; then
+        echo "$out"
       else
-        echo "disabled"
+        echo "${out:-disabled}"
       fi
+      ;;
+    *)
+      echo "unknown"
       ;;
   esac
 }
 
+run_appsync_command() {
+  local subcmd="$1"
+  if [ -n "$APPSYNC_DAEMON_ARGS" ]; then
+    # APPSYNC_DAEMON_ARGS 用于兼容 systemd 环境文件中的追加参数。
+    # shellcheck disable=SC2086
+    "$BIN_PATH" "$subcmd" $APPSYNC_DAEMON_ARGS
+  else
+    "$BIN_PATH" "$subcmd"
+  fi
+}
+
+run_initial_sync() {
+  if [ "$SYNC_AFTER_INSTALL" != "true" ]; then
+    info "已按 SYNC_AFTER_INSTALL=false 跳过首次同步"
+    return 0
+  fi
+
+  step "首次同步应用"
+  info "安装完成后立即执行一次同步，避免只启动 daemon 但未马上写入应用"
+  [ -n "$APPSYNC_DAEMON_ARGS" ] && kv "同步参数" "$APPSYNC_DAEMON_ARGS"
+
+  local start_ts end_ts elapsed rc
+  start_ts="$(date +%s)"
+
+  set +e
+  if has_cmd timeout && [ "${SYNC_TIMEOUT:-0}" != "0" ]; then
+    timeout "${SYNC_TIMEOUT}s" bash -c 'BIN_PATH="$1"; APPSYNC_DAEMON_ARGS="$2"; if [ -n "$APPSYNC_DAEMON_ARGS" ]; then "$BIN_PATH" sync $APPSYNC_DAEMON_ARGS; else "$BIN_PATH" sync; fi' bash "$BIN_PATH" "$APPSYNC_DAEMON_ARGS"
+    rc=$?
+  else
+    run_appsync_command sync
+    rc=$?
+  fi
+  set -e
+
+  end_ts="$(date +%s)"
+  elapsed=$((end_ts - start_ts))
+
+  if [ "$rc" -eq 0 ]; then
+    ok "首次同步完成，耗时 ${elapsed}s"
+    return 0
+  fi
+
+  if [ "$rc" -eq 124 ]; then
+    warn "首次同步超时，已超过 ${SYNC_TIMEOUT}s；daemon 启动后会继续定时同步"
+  else
+    warn "首次同步未完成，退出码：$rc。daemon 启动后会继续重试"
+  fi
+  warn "可查看日志：journalctl -u ${APP_NAME}.service -f，或手动执行：${APP_NAME} sync"
+  return 0
+}
+
+print_last_sync_status() {
+  [ -x "$BIN_PATH" ] || return 0
+  [ -d "$DATA_DIR" ] || return 0
+
+  say ""
+  say "最近同步状态："
+  if "$BIN_PATH" status 2>/dev/null | sed 's/^/  /' >&2; then
+    return 0
+  fi
+  say "  暂无状态记录，等待首次同步完成后生成。"
+}
 print_summary() {
   local old_version="$1"
   local new_version="$2"
@@ -608,7 +690,9 @@ print_summary() {
   say "  journalctl -u ${APP_NAME}.service -f"
   say "  ${APP_NAME} status"
   say "  ${APP_NAME} doctor"
+  say "  ${APP_NAME} sync"
   say "  ${APP_NAME} sync --dry-run"
+  print_last_sync_status
   say ""
   say "卸载命令："
   say "  bash install-update.sh uninstall"
@@ -655,8 +739,10 @@ install_or_update() {
 
   if [ "$RUN_DETECT" = "true" ]; then
     step "检测 1Panel 本地应用目录"
-    "$BIN_PATH" detect || warn "自动检测失败，可稍后执行：$APP_NAME detect 或手动配置 --local-dir"
+    run_appsync_command detect || warn "自动检测失败，可稍后执行：$APP_NAME detect 或手动配置 --local-dir"
   fi
+
+  run_initial_sync
 
   step "配置自启动服务"
   if [ "$INSTALL_SERVICE" = "true" ]; then

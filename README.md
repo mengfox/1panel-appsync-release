@@ -33,10 +33,23 @@ curl -fsSL https://cnb.cool/mengfox/1panel-appsync-release/-/git/raw/main/instal
 
 安装完成后会默认：
 - 写入 `systemd` 服务：`1panel-appsync.service`
+- 先在前台立即执行一次 `1panel-appsync sync`
 - 设置开机自启动
-- 立即启动 `1panel-appsync daemon`
-- 使用程序内置 `scheduler` 定时同步，默认启动即执行一次，之后每 10 分钟执行一次
+- 启动 `1panel-appsync daemon`
+- 使用程序内置 `scheduler` 定时同步，之后每 10 分钟执行一次
 - 不使用 `crontab`
+
+如只想安装和启动 daemon，不想安装阶段等待首次同步：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mengfox/1panel-appsync-release/main/install-update.sh | sudo env SYNC_AFTER_INSTALL=false bash
+```
+
+如你的 1Panel 本地应用目录不是默认路径：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mengfox/1panel-appsync-release/main/install-update.sh | sudo env APPSYNC_DAEMON_ARGS="--local-dir /data/1panel/resource/apps/local" bash
+```
 
 ---
 
@@ -56,10 +69,10 @@ curl -fsSL https://cnb.cool/mengfox/1panel-appsync-release/-/git/raw/main/instal
 
 ## 安装指定版本
 
-例如安装 `v0.4.8`：
+例如安装 `v0.5.0`：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mengfox/1panel-appsync-release/main/install-update.sh | sudo env CHANNEL=v0.4.8 bash
+curl -fsSL https://raw.githubusercontent.com/mengfox/1panel-appsync-release/main/install-update.sh | sudo env CHANNEL=v0.5.0 bash
 ```
 
 指定版本默认从 GitHub Release 精确下载，避免 CNB Raw main 分支导致装错版本。
