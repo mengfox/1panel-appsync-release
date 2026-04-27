@@ -31,6 +31,13 @@ curl -fsSL https://cnb.cool/mengfox/1panel-appsync-release/-/git/raw/main/instal
 
 > CNB Raw 文件路径必须是 `/-/git/raw/main/`，不是 `/-/raw/main/`。
 
+安装完成后会默认：
+- 写入 `systemd` 服务：`1panel-appsync.service`
+- 设置开机自启动
+- 立即启动 `1panel-appsync daemon`
+- 使用程序内置 `scheduler` 定时同步，默认启动即执行一次，之后每 10 分钟执行一次
+- 不使用 `crontab`
+
 ---
 
 ## 一键更新
@@ -49,10 +56,10 @@ curl -fsSL https://cnb.cool/mengfox/1panel-appsync-release/-/git/raw/main/instal
 
 ## 安装指定版本
 
-例如安装 `v0.4.3`：
+例如安装 `v0.4.8`：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mengfox/1panel-appsync-release/main/install-update.sh | sudo env CHANNEL=v0.4.3 bash
+curl -fsSL https://raw.githubusercontent.com/mengfox/1panel-appsync-release/main/install-update.sh | sudo env CHANNEL=v0.4.8 bash
 ```
 
 指定版本默认从 GitHub Release 精确下载，避免 CNB Raw main 分支导致装错版本。
@@ -148,7 +155,9 @@ apps/local
 
 ## systemd 服务
 
-启动服务：
+一键安装脚本默认已经启用并启动服务，一般不需要手动执行。
+
+手动启用并启动：
 
 ```bash
 sudo systemctl enable --now 1panel-appsync.service
@@ -170,6 +179,25 @@ journalctl -u 1panel-appsync.service -f
 
 ```bash
 sudo systemctl restart 1panel-appsync.service
+```
+
+安装时跳过自启动：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mengfox/1panel-appsync-release/main/install-update.sh | sudo env START_SERVICE=false ENABLE_SERVICE=false bash
+```
+
+自定义 daemon 参数：
+
+```bash
+sudo nano /etc/1panel-appsync/env
+sudo systemctl restart 1panel-appsync.service
+```
+
+示例：
+
+```bash
+APPSYNC_DAEMON_ARGS="--local-dir /data/1panel/resource/apps/local"
 ```
 
 ---
